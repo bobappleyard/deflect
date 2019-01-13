@@ -8,124 +8,159 @@ import (
 
 type Value interface {
 	Expr() ast.Expr
+	Matches(w Value) bool
+	Known() bool
+	KnownRef() bool
 	Op(op token.Token, w Value) Value
-	Method(name string, args []Value) Value
-	Call(args []Value) Value
+	Member(name string) Value
+	Call(args []Value) []Value
+	Update(w Value)
 }
 
-type Unknown struct {
+type UnknownValue struct {
 	expr ast.Expr
 }
 
-func (v *Unknown) Expr() ast.Expr {
-	return v.expr
-}
+func (v *UnknownValue) Expr() ast.Expr                   { return v.expr }
+func (v *UnknownValue) Matches(w Value) bool             { return !w.Known() }
+func (v *UnknownValue) Known() bool                      { return false }
+func (v *UnknownValue) KnownRef() bool                   { return false }
+func (v *UnknownValue) Op(op token.Token, w Value) Value { return opExpr(op, v, w) }
+func (v *UnknownValue) Member(name string) Value         { return selExpr(v, name) }
+func (v *UnknownValue) Call(args []Value) []Value        { return []Value{callExpr(v, args)} }
+func (v *UnknownValue) Update(w Value)                   {}
 
-func (v *Unknown) Op(op token.Token, w Value) Value {
-	return opExpr(op, v, w)
-}
+type baseValue struct{}
 
-func (v *Unknown) Method(name string, args []Value) Value {
-	return callExpr(selExpr(v, name), args)
-}
+func (baseValue) Matches(Value) bool               { return false }
+func (baseValue) Known() bool                      { return true }
+func (baseValue) KnownRef() bool                   { return false }
+func (baseValue) Op(op token.Token, w Value) Value { panic("invalid operation") }
+func (baseValue) Member(name string) Value         { panic("invalid operation") }
+func (baseValue) Call(args []Value) []Value        { panic("invalid operation") }
+func (baseValue) Update(w Value)                   {}
 
-func (v *Unknown) Call(args []Value) Value {
-	return callExpr(v, args)
-}
-
-type Int struct {
+type IntValue struct {
+	baseValue
 	value int64
 }
 
-func (v *Int) Expr() ast.Expr {
+func Int(v int64) *IntValue {
+	return &IntValue{value: v}
+}
+
+func (v *IntValue) Expr() ast.Expr {
 	return &ast.BasicLit{Kind: token.INT, Value: strconv.FormatInt(v.value, 10)}
 }
 
-func (v *Int) Op(op token.Token, w Value) Value {
-	if w, ok := w.(*Int); ok {
+func (v *IntValue) Matches(w Value) bool {
+	if w, ok := w.(*IntValue); ok {
+		return w.value == v.value
+	}
+	return false
+}
+
+func (v *IntValue) Op(op token.Token, w Value) Value {
+	if w, ok := w.(*IntValue); ok {
 		vx, wx := v.value, w.value
 		switch op {
 		case token.ADD:
-			return &Int{vx + wx}
+			return Int(vx + wx)
 		case token.MUL:
-			return &Int{vx * wx}
+			return Int(vx * wx)
 		case token.QUO:
-			return &Int{vx / wx}
+			return Int(vx / wx)
 		case token.REM:
-			return &Int{vx % wx}
+			return Int(vx % wx)
 		case token.AND:
-			return &Int{vx | wx}
+			return Int(vx | wx)
 		case token.OR:
-			return &Int{vx | wx}
+			return Int(vx | wx)
 		case token.XOR:
-			return &Int{vx ^ wx}
+			return Int(vx ^ wx)
+		case token.SHL:
+			return Int(vx << uint(wx))
+		case token.SHR:
+			return Int(vx >> uint(wx))
 		case token.AND_NOT:
-			return &Int{vx &^ wx}
+			return Int(vx &^ wx)
+
+		case token.EQL:
+			return Bool(vx == wx)
+		case token.NEQ:
 		}
 	}
 	return opExpr(op, v, w)
 }
 
-func (v *Int) Method(name string, args []Value) Value {
-	panic("invalid operation")
-}
-
-func (v *Int) Call(args []Value) Value {
-	panic("invalid operation")
-}
-
-type String struct {
+type StringValue struct {
+	baseValue
 	value string
 }
 
-func (v *String) Expr() ast.Expr {
+func String(v string) *StringValue {
+	return &StringValue{value: v}
+}
+
+func (v *StringValue) Matches(w Value) bool {
+	if w, ok := w.(*StringValue); ok {
+		return w.value == v.value
+	}
+	return false
+}
+
+func (v *StringValue) Expr() ast.Expr {
 	return &ast.BasicLit{Kind: token.STRING, Value: strconv.Quote(v.value)}
 }
 
-func (v *String) Op(op token.Token, w Value) Value {
-	if w, ok := w.(*String); ok {
+func (v *StringValue) Op(op token.Token, w Value) Value {
+	if w, ok := w.(*StringValue); ok {
 		vx, wx := v.value, w.value
 		switch op {
 		case token.ADD:
-			return &String{vx + wx}
+			return String(vx + wx)
 		}
 	}
 	return opExpr(op, v, w)
 }
 
-func (v *String) Method(name string, args []Value) Value {
-	panic("invalid operation")
-}
-
-func (v *String) Call(args []Value) Value {
-	panic("invalid operation")
-}
-
-type Bool struct {
+type BoolValue struct {
+	baseValue
 	value bool
 }
 
-func (v *Bool) Expr() ast.Expr {
+var (
+	True  = &BoolValue{value: true}
+	False = &BoolValue{value: false}
+)
+
+func Bool(value bool) *BoolValue {
+	if value {
+		return True
+	}
+	return False
+}
+
+func (v *BoolValue) Expr() ast.Expr {
 	return &ast.Ident{Name: strconv.FormatBool(v.value)}
 }
 
-func (v *Bool) Op(op token.Token, w Value) Value {
-	if w, ok := w.(*Bool); ok {
+func (v *BoolValue) Matches(w Value) bool {
+	if w, ok := w.(*BoolValue); ok {
+		return w.value == v.value
+	}
+	return false
+}
+
+func (v *BoolValue) Op(op token.Token, w Value) Value {
+	if w, ok := w.(*BoolValue); ok {
 		vx, wx := v.value, w.value
 		switch op {
 		case token.LAND:
-			return &Bool{vx && wx}
+			return Bool(vx && wx)
 		case token.LOR:
-			return &Bool{vx || wx}
+			return Bool(vx || wx)
 		}
 	}
 	return opExpr(op, v, w)
-}
-
-func (v *Bool) Method(name string, args []Value) Value {
-	panic("invalid operation")
-}
-
-func (v *Bool) Call(args []Value) Value {
-	panic("invalid operation")
 }

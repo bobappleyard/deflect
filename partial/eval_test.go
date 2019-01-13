@@ -9,19 +9,51 @@ import (
 	"testing"
 )
 
-type testScope map[string]Value
+type testScope struct {
+	parent *testScope
+	values map[string]Value
+	syms   int
+}
 
-func (s testScope) LookupValue(name string) Value {
-	if v, ok := s[name]; ok {
+func (s *testScope) Lookup(name string) Value {
+	if v, ok := s.values[name]; ok {
 		return v
 	}
-	return &Unknown{&ast.Ident{Name: name}}
+	return s.parent.Lookup(name)
+}
+
+func (s *testScope) DefineValue(name string, value Value) {
+	if s.values == nil {
+		s.values = map[string]Value{}
+	}
+	s.values[name] = value
+}
+
+func defineUnknown(scope *testScope, name string) {
+	scope.DefineValue(name, &UnknownValue{&ast.Ident{Name: name}})
+}
+
+func nodeString(n ast.Node) string {
+	var buf bytes.Buffer
+	format.Node(&buf, token.NewFileSet(), n)
+	return buf.String()
+}
+
+func stringNode(s string) ast.Node {
+	n, err := parser.ParseExpr(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
 }
 
 func TestEval(t *testing.T) {
-	scope := testScope{
-		"a": &Int{1},
-	}
+	scope := &testScope{}
+	scope.DefineValue("a", Int(1))
+	defineUnknown(scope, "x")
+	defineUnknown(scope, "y")
+	defineUnknown(scope, "f")
+	defineUnknown(scope, "recv")
 	for _, test := range []struct {
 		name, in, out string
 	}{
@@ -123,14 +155,10 @@ func TestEval(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			in, _ := parser.ParseExpr(test.in)
-			expected, _ := parser.ParseExpr(test.out)
-			out := Eval(in, scope).Expr()
-			var ob, eb bytes.Buffer
-			fset := token.NewFileSet()
-			format.Node(&ob, fset, out)
-			format.Node(&eb, fset, expected)
-			if ob.String() != eb.String() {
-				t.Errorf("\nexpected\n\t%s\ngot\n\t%s", eb.String(), ob.String())
+			expected := nodeString(stringNode(test.out))
+			out := nodeString(Eval(in, scope)[0].Expr())
+			if out != expected {
+				t.Errorf("\nexpected\n\t%s\ngot\n\t%s", expected, out)
 			}
 		})
 	}
