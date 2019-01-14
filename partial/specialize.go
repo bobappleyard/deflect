@@ -1,7 +1,6 @@
 package partial
 
 import (
-	"github.com/y0ssar1an/q"
 	"go/ast"
 	"go/token"
 )
@@ -37,7 +36,6 @@ func (a *analyzer) analyze(stmt ast.Stmt, cont Point) Point {
 		return &returnValues{stmt.Results}
 
 	case *ast.IfStmt:
-		q.Q(stmt)
 		consequent := a.analyze(stmt.Body, cont)
 		antecedent := cont
 		if stmt.Else != nil {
